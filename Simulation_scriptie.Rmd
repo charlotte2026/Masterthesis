@@ -1,0 +1,455 @@
+---
+title: "Simulation data-set: Analysis "
+output: html_document
+date: "2024-11-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+All the relevant packages will go here. 
+```{r, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+# load the relevant packges
+library(ggplot2)
+library(brms)
+library(dplyr)
+library(bayestestR)
+library(tidybayes)
+```
+
+
+Let's start by simulating data. We will simulate data with different between and within variable effects. We can compare the results of these analyses.
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Simulation parameters for participant and time point
+n_individuals <- 100  # Number of individuals
+n_time <- 2           # 2 time points as we have in the data
+
+data <- data.frame(id = rep(1:n_individuals, each = n_time),
+                   time = rep(1:n_time, n_individuals))
+
+
+# Step 1: Simulate group-level data. This is the first data point. All the varariable (X) have a negative relationship with the outcome varaible plus random error
+
+# Simulate dependent variable on a 10-point scale like the eNPS
+group_Y <- sample(1:10, n_individuals, replace = TRUE)
+
+# Generate independent variables with equally strong negative relationship to Y
+group_X1 <- pmax(1, pmin(5, round(10 - group_Y + rnorm(n_individuals, mean = 0, sd = 1))))
+group_X2 <- pmax(1, pmin(5, round(10 - group_Y + rnorm(n_individuals, mean = 0, sd = 1))))
+group_X3 <- pmax(1, pmin(5, round(10 - group_Y + rnorm(n_individuals, mean = 0, sd = 1))))
+
+# Step 2: Generate a second time point for each individual with different within-individual relationship between X and Y
+
+generate_within_positive <- function() {
+  Y_dev <- sample(-2:2, 2, replace = TRUE)  # Small deviations from the first Y value (-1, 0 or +1)
+  X1_dev <- 0.0 * Y_dev + round(rnorm(n_individuals, mean = 0, sd = 1.5))  # No within individual effect
+  X2_dev <- 0.5 * Y_dev + round(rnorm(n_individuals, mean = 0, sd = 1.5))  # Positive within effect
+  X3_dev <- -0.5 * Y_dev + round(rnorm(n_individuals, mean = 0, sd = 1.5)) # Negative within effect but smaller than the group effect
+  return(data.frame(X1_dev,X2_dev, X3_dev, Y_dev))
+}
+
+# Combine group-level data with individual-level deviations
+for (i in 1:n_individuals) {
+    
+  # Group-level values
+    individual_X1 <- group_X1[i]
+    individual_X2 <- group_X2[i]
+    individual_X3 <- group_X3[i]
+    individual_Y <- group_Y[i]
+    
+    # Generate within-individual deviations
+    individual_devs <- generate_within_positive()
+    
+    
+    # Store the first observation
+    data$X1[data$id == i & data$time == 1] <- pmin(pmax(individual_X1, 1), 5)
+    data$X2[data$id == i & data$time == 1] <- pmin(pmax(individual_X2, 1), 5)  
+    data$X3[data$id == i & data$time == 1] <- pmin(pmax(individual_X3, 1), 5)  
+    data$Y[data$id == i & data$time == 1] <- pmin(pmax(round(individual_Y), 1), 10)  
+
+    # For the second time point, add deviations, random errors, and round the result
+    data$X1[data$id == i & data$time == 2] <- pmin(pmax(round(individual_X1 + individual_devs$X1_dev[2]), 1), 5) 
+    data$X2[data$id == i & data$time == 2] <- pmin(pmax(round(individual_X2 + individual_devs$X2_dev[2]), 1), 5)
+    data$X3[data$id == i & data$time == 2] <- pmin(pmax(round(individual_X3 + individual_devs$X3_dev[2]), 1), 5)
+    data$Y[data$id == i & data$time == 2] <- pmin(pmax(round(individual_Y + individual_devs$Y_dev[2]), 1), 10)
+}
+
+head(data)
+```
+
+Data Exploration:
+
+First, let's look at the data on an individual level. 
+
+```{r}
+# let's plot the data. First for X2
+# Plot 1: Group-level effect - Negative relationship
+ggplot(data, aes(x = X2, y = Y)) +
+  geom_point(alpha = 0.06) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  labs(title = "Group-level effect (negative relationship)",
+       x = "Independent variable (X1 positive within effect)", y = "Dependent variable (10-point scale)") +
+  theme_minimal()
+
+# Plot 2: Within-individual
+ggplot(data, aes(x = X2, y = Y, group = id, color = factor(id))) +
+  geom_line() +  # Connect the 2 time points for each individual
+  geom_point(size = 2, alpha = 0.6) +
+  labs(title = "Within-individual effect (positive relationship over 2 time points)",
+       x = "Independent variable (X2 positive within effect)", y = "Dependent variable (10-point scale)") +
+  theme_minimal()
+```
+
+```{r}
+# let's plot the data. First for X3
+# Plot 1: Group-level effect - Negative relationship
+ggplot(data, aes(x = X3, y = Y)) +
+  geom_point(alpha = 0.06) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  labs(title = "Group-level effect (negative relationship)",
+       x = "Independent variable (X3 negative within effect)", y = "Dependent variable (10-point scale)") +
+  theme_minimal()
+
+# Plot 2: Within-individual
+ggplot(data, aes(x = X3, y = Y, group = id, color = factor(id))) +
+  geom_line() +  # Connect the 2 time points for each individual
+  geom_point(size = 2, alpha = 0.6) +
+  labs(title = "Within-individual effect (positive relationship over 2 time points)",
+       x = "Independent variable (X3 negative within effect)", y = "Dependent variable (10-point scale)") +
+  theme_minimal()
+```
+
+Next, we will plot the distribution of the items. 
+
+```{r}
+hist(data$X1)
+hist(data$X2)
+hist(data$X3)
+```
+
+Now let's calculate the inter-item correlation. 
+
+```{r}
+cor(data, method = "spearman")
+```
+
+Next, let's start with the data analysis. 
+
+```{r, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+fit_group_X1 <- brm(
+  formula = Y ~  mo(X1), 
+  data = data,
+  family = cumulative("logit"),
+  iter = 1000,
+  chains = 1,
+  warmup = 500,
+  cores = parallel::detectCores())
+
+fit_group_X2 <- brm(
+  formula = Y ~   mo(X2), 
+  data = data,
+  family = cumulative("logit"),
+  iter = 1000,
+  chains = 1,
+  warmup = 500,
+  cores = parallel::detectCores())
+
+fit_group_X3 <- brm(
+  formula = Y ~  mo(X3), 
+  data = data,
+  family = cumulative("logit"),
+  iter = 1000,
+  chains = 1,
+  warmup = 500,
+  cores = parallel::detectCores())
+```
+
+```{r}
+summary(fit_group_X1)
+summary(fit_group_X2)
+summary(fit_group_X3)
+# all the varaibles have on group level a negative relationship
+```
+
+
+
+```{r}
+# Compute WAIC and LOO for both models
+waic_X1 <- WAIC(fit_group_X1)
+waic_X2 <- WAIC(fit_group_X2)
+
+loo_X1 <- LOO(fit_group_X1)
+loo_X2 <- LOO(fit_group_X2)
+
+# Compare WAIC or LOO values
+waic_X1$estimates['waic', 'Estimate']
+waic_X2$estimates['waic', 'Estimate']
+
+loo_X1$estimates['looic', 'Estimate']
+loo_X2$estimates['looic', 'Estimate']
+```
+
+
+```{r}
+fit_group <- brm(
+  formula = Y ~  mo(X1) + mo(X2) + mo(X3), 
+  data = data,
+  family = cumulative("logit"),
+  iter = 1000,
+  chains = 1,
+  warmup = 500,
+  cores = parallel::detectCores())
+```
+
+
+```{r}
+summary(fit_group)
+```
+
+
+Improve this: 
+
+Now the effect of X2 is not significant anymore. This is because indeed the other two predictors are stronger. They are stronger because the group effect in the same but the within effect is negative or not existing. However that does not make this model relaibale because with real data the group effect is often not the same. So it could be possible that even with an oppiside within effect the group effect could still be found depending on how big the group effect is.
+
+
+
+
+Next we will calculate the bayse factor if one variable is indeed bigger than the other. We will use bootstrapping to calculate the probability that that one predictor is bigger than the other and based on that we will calculate the bayes factor. The function hypothesis() is often used to calculate the bayes factor. However, monotonic effect are not intregrated in this function yet. 
+
+We for example test here what the probability that negative effect of X1 is bigger than the effect of X2. 
+
+```{r}
+# It would be easier to calculate the bayes factor like this but this is not working for monotonic effect.
+# hypothesis(fit_group, 'bsp_moX1 = bsp_moX2')
+
+# Extract posterior samples
+posterior_samples <- as_draws_df(fit_group)
+
+# Calculate the difference between pleasure and development opportunities
+diff <- posterior_samples$bsp_moX2 - posterior_samples$bsp_moX1
+
+# Calculate the probability that pleasure is greater than development opportunities
+prob_X1_bigger_negative_effect <- mean(diff > 0)
+
+# Print the probability result
+print(prob_X1_bigger_negative_effect)
+
+# Calculate the 95% credible interval for the difference
+ci_95 <- quantile(diff, probs = c(0.025, 0.975))
+
+xlow <- -0.25
+xhigh <- 1
+yhigh <- 8
+
+
+plot(density(diff),
+     xlim = c(xlow, xhigh),
+     ylim = c(0, yhigh),
+     col = "black",
+     lwd = 2,
+     lty = 1,
+     main = " ",
+     ylab = "Density",
+     xlab = "Difference Parameter Values (Communication Management- Adress behavior supervisor)",
+     axes = F,
+     cex.axis = 0.8)
+
+axis(1, at = seq(xlow, xhigh, length.out = 5), cex.axis = 0.8)  # X-axis
+axis(2, at = seq(0, yhigh, length.out = 5), cex.axis = 0.8)  # Y-axis
+
+# Add vertical lines for the mean and 95% confidence intervals
+mean_diff <- mean(diff)
+ci_diff <- quantile(diff, probs = c(0.10, 1)) # 95% CI
+
+abline(v = 0, col = "red", lwd = 2, lty = 2)
+abline(v = ci_diff, col = "black", lwd = 2, lty = 2)    # 95% CI lines
+
+# Add a legend
+# Add a legend with multiline text
+legend("topright",
+       legend = c("95% CI", "No difference\nbetween predictors"),
+       col = c("black", "red"),
+       lty = c(2, 2),
+       lwd = c(2, 2),
+       cex = 0.8,
+       bty = "n")
+```
+
+
+
+
+The probability is 0.998 that the negative effect of X1 is bigger than X2. Let's calculate the bayes factor. 
+
+```{r}
+postidor_odds= prob_X1_bigger_negative_effect / (1-prob_X1_bigger_negative_effect)
+postidor_odds
+```
+
+There is a strong evidence that X1 has a bigger negative effect than X2. 
+```{r}
+prior_summary(fit_group)
+```
+```{r}
+prior_summary(fit_group)
+```
+
+```{r}
+summary(fit_group)
+```
+
+```{r}
+posterior_samples <- as_draws_df(fit_group)
+str(posterior_samples)  # Check the structure of the posterior samples
+head(posterior_samples)  # View the first few rows of the posterior samples
+```
+
+```{r}
+# first let make a copy of the data 
+data_within <- data
+
+# make the variables nummeric sothat we can use devition on them
+data_within$X1 <- as.numeric(data_within$X1)
+data_within$X2 <- as.numeric(data_within$X2)
+data_within$X3 <- as.numeric(data_within$X3)
+data_within$Y <- as.numeric(data_within$Y)
+
+# Calculate changes in Y and X between time points for each individual
+data_within <- data_within %>%
+  group_by(id) %>%
+  summarise(
+    change_Y = Y[time == 2] - Y[time == 1],  
+    change_X1 = X1[time == 2] - X1[time == 1],
+    change_X2 = X2[time == 2] - X2[time == 1]   ,
+    change_X3 = X3[time == 2] - X3[time == 1]   
+  )
+
+# now lets make the variables ordinal again
+data_within$change_Y <- factor(data_within$change_Y, ordered = TRUE)
+data_within$change_X1 <- factor(data_within$change_X1, ordered = TRUE)
+data_within$change_X2 <- factor(data_within$change_X2, ordered = TRUE)
+data_within$change_X3 <- factor(data_within$change_X3, ordered = TRUE)
+
+head(data_within)
+```
+
+Now let´s run the analysis
+
+```{r, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+fit_within_X1 <- brm(
+  formula = bf(change_Y ~ mo(change_X1)), 
+  data = data_within,
+  family = cumulative("logit"), 
+  chains = 1,
+  iter = 2000,
+  warmup = 500)
+
+fit_within_X2 <- brm(
+  formula = bf(change_Y ~ mo(change_X2)), 
+  data = data_within,
+  family = cumulative("logit"), 
+  chains = 1,
+  iter = 2000,
+  warmup = 500)
+
+fit_within_X3 <- brm(
+  formula = bf(change_Y ~ mo(change_X3)), 
+  data = data_within,
+  family = cumulative("logit"), 
+  chains = 1,
+  iter = 2000,
+  warmup = 500)
+```
+
+
+```{r}
+summary(fit_within_X1)
+summary(fit_within_X2)
+summary(fit_within_X3)
+```
+
+Let's do all the predictors in the model.
+
+
+```{r}
+fit_within <- brm(
+  formula = bf(change_Y ~ mo(change_X1) + mo(change_X2) + mo(change_X3)), 
+  data = data_within,
+  family = cumulative("logit"), 
+  chains = 1,
+  iter = 2000,
+  warmup = 500)
+```
+
+```{r}
+summary(fit_within)
+```
+
+
+```{r}
+fit_group_individual_X1 <- brm(
+  formula = Y ~ mo(X1) + (1 + mo(X1) || id), 
+  data = data,
+  family = cumulative("logit"),
+  iter = 4000,
+  chains = 4,
+  warmup = 1000,
+  cores = parallel::detectCores())
+
+fit_group_individual_X2 <- brm(
+  formula = Y ~  mo(X2)  + (1 + mo(X2) || id), 
+  data = data,
+  family = cumulative("logit"),
+  iter = 4000,
+  chains = 4,
+  warmup = 1000,
+  cores = parallel::detectCores())
+
+fit_group_individual_X3 <- brm(
+  formula = Y ~ mo(X3) + (1 +  mo(X3)|| id), 
+  data = data,
+  family = cumulative("logit"),
+  iter = 4000,
+  chains = 4,
+  warmup = 1000,
+  cores = parallel::detectCores())
+```
+
+```{r}
+summary(fit_group_individual_X1)
+```
+
+
+```{r}
+summary(fit_group_individual_X2)
+```
+
+
+```{r}
+summary(fit_group_individual_X3)
+```
+
+
+Now let's make a model with all the predictors in it. 
+
+```{r}
+fit_group_individual <- brm(
+  formula = Y ~ mo(X1) + mo(X2) + mo(X3)+ (1 + mo(X1)+  mo(X2) + mo(X3)|| id), 
+  data = data,
+  family = cumulative("logit"),
+  iter = 4000,
+  chains = 4,
+  warmup = 1000,
+  cores = parallel::detectCores())
+```
+
+
+```{r}
+summary(fit_group_individual)
+```
+
+Voor X2 is het interval ook veel groter geworden. Dus nog duidelijker dat deze varaible niet significant is. 
